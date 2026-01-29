@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         RD Conversas - Auto Transferência Setor de Vendas (Online A–Z)
+// @name         RD Conversas - Auto Transferência (Setor de Vendas + UI)
 // @namespace    https://tampermonkey.net/
-// @version      1.3.0
-// @description  Atualiza fila e transfere clientes para operadores online do Setor de Vendas em ordem alfabética
+// @version      2.0.0
+// @description  Atualiza fila e transfere clientes para operadores online (A–Z) com painel visual
 // @match        https://app.tallos.com.br/*
 // @grant        none
 // ==/UserScript==
@@ -13,7 +13,67 @@
     let rodando = false;
     let emTransferencia = false;
     let loop = null;
-    let indiceOnline = 0; // 🔁 round-robin entre onlines
+    let indiceOnline = 0;
+
+    /* ==========================
+       UI VISUAL NA TELA
+    ========================== */
+    const ui = (() => {
+        const box = document.createElement('div');
+        box.innerHTML = `
+            <div id="ui-status">⏸ Parado</div>
+            <hr>
+            <div><b>👤 Cliente:</b> <span id="ui-cliente">—</span></div>
+            <div><b>🎯 Atendente:</b> <span id="ui-atendente">—</span></div>
+            <div><b>📦 Etapa:</b> <span id="ui-etapa">—</span></div>
+            <hr>
+            <div><b>🟢 Onlines (A–Z)</b></div>
+            <ul id="ui-onlines"></ul>
+        `;
+
+        Object.assign(box.style, {
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            width: '260px',
+            background: '#111',
+            color: '#fff',
+            padding: '12px',
+            borderRadius: '8px',
+            fontSize: '13px',
+            zIndex: 99999,
+            boxShadow: '0 4px 12px rgba(0,0,0,.5)'
+        });
+
+        box.querySelectorAll('b').forEach(b => b.style.color = '#0dcaf0');
+        box.querySelectorAll('hr').forEach(hr => hr.style.opacity = .2);
+        document.body.appendChild(box);
+
+        function pulse(el, color) {
+            el.style.color = color;
+            el.style.transform = 'scale(1.05)';
+            setTimeout(() => {
+                el.style.transform = 'scale(1)';
+                el.style.color = '#fff';
+            }, 300);
+        }
+
+        return {
+            status(t) { const e = box.querySelector('#ui-status'); e.textContent = t; pulse(e, '#ffc107'); },
+            cliente(t) { const e = box.querySelector('#ui-cliente'); e.textContent = t; pulse(e, '#0d6efd'); },
+            atendente(t) { const e = box.querySelector('#ui-atendente'); e.textContent = t; pulse(e, '#20c997'); },
+            etapa(t) { const e = box.querySelector('#ui-etapa'); e.textContent = t; pulse(e, '#fd7e14'); },
+            onlines(lista) {
+                const ul = box.querySelector('#ui-onlines');
+                ul.innerHTML = '';
+                lista.forEach(n => {
+                    const li = document.createElement('li');
+                    li.textContent = n;
+                    ul.appendChild(li);
+                });
+            }
+        };
+    })();
 
     /* ==========================
        BOTÃO START / STOP
@@ -44,8 +104,8 @@
         rodando = true;
         botao.textContent = '⏸ PARAR';
         botao.style.background = '#dc3545';
-        console.log('▶ Loop iniciado');
-        loop = setInterval(loopPrincipal, 6000);
+        ui.status('▶ Rodando');
+        loop = setInterval(loopPrincipal, 6500);
     }
 
     function parar() {
@@ -53,7 +113,7 @@
         clearInterval(loop);
         botao.textContent = '▶ INICIAR';
         botao.style.background = '#28a745';
-        console.log('⏹ Loop parado');
+        ui.status('⏸ Parado');
     }
 
     /* ==========================
@@ -74,16 +134,13 @@
 
         try {
             const data = JSON.parse(raw);
-
             if (Date.now() - data.atualizadoEm > 15000) return [];
 
-            const lista = Array.isArray(data.online)
-                ? [...new Set(data.online)].sort((a, b) =>
-                    a.localeCompare(b, 'pt-BR')
-                )
-                : [];
+            const lista = [...new Set(data.online)].sort((a, b) =>
+                a.localeCompare(b, 'pt-BR')
+            );
 
-            console.log('🟢 ONLINE (A–Z):', lista);
+            ui.onlines(lista);
             return lista;
         } catch {
             return [];
@@ -95,11 +152,8 @@
         if (!lista.length) return null;
 
         if (indiceOnline >= lista.length) indiceOnline = 0;
-
-        const nome = lista[indiceOnline];
-        indiceOnline++;
-
-        console.log('🎯 Próximo atendente:', nome);
+        const nome = lista[indiceOnline++];
+        ui.atendente(nome);
         return nome;
     }
 
@@ -109,8 +163,8 @@
     function atualizarFila() {
         const btn = document.querySelector('.custom-queue-wait-icon');
         if (!btn) return false;
+        ui.etapa('Atualizando fila');
         click(btn);
-        console.log('🔄 Fila atualizada');
         return true;
     }
 
@@ -126,7 +180,8 @@
             ultimo.querySelector('strong, p, span')?.innerText?.trim() ||
             ultimo.innerText.split('\n')[0].trim();
 
-        console.log('👤 Cliente selecionado:', nome);
+        ui.cliente(nome);
+        ui.etapa('Cliente selecionado');
         return true;
     }
 
@@ -137,12 +192,12 @@
         if (!btn) return false;
 
         emTransferencia = true;
+        ui.etapa('Clicando em Transferir');
         click(btn);
-        console.log('🔁 Transferir clicado');
         return true;
     }
 
-    function selecionarSetorDeVendas() {
+    function selecionarSetorVendas() {
         const select = document.querySelector(
             'select[data-cy="cy-confirm-transfer-to-department"]'
         );
@@ -151,16 +206,13 @@
         const opcao = [...select.options].find(o =>
             o.textContent.toUpperCase().includes('SETOR DE VENDAS')
         );
-        if (!opcao) {
-            console.log('❌ Opção SETOR DE VENDAS não encontrada');
-            return false;
-        }
+        if (!opcao) return false;
 
         select.value = opcao.value;
         select.dispatchEvent(new Event('input', { bubbles: true }));
         select.dispatchEvent(new Event('change', { bubbles: true }));
 
-        console.log('📂 Setor de Vendas selecionado');
+        ui.etapa('Setor de Vendas selecionado');
         return true;
     }
 
@@ -170,8 +222,8 @@
         );
         if (!btn) return false;
 
+        ui.etapa('Confirmando setor');
         click(btn);
-        console.log('🟢 Selecionar clicado');
         return true;
     }
 
@@ -187,16 +239,13 @@
         const opcao = [...select.options].find(o =>
             o.textContent.trim() === nome
         );
-        if (!opcao) {
-            console.log('❌ Atendente não encontrado no select:', nome);
-            return false;
-        }
+        if (!opcao) return false;
 
         select.value = opcao.value;
         select.dispatchEvent(new Event('input', { bubbles: true }));
         select.dispatchEvent(new Event('change', { bubbles: true }));
 
-        console.log('👨‍💼 Atendente selecionado:', nome);
+        ui.etapa('Atendente selecionado');
         return true;
     }
 
@@ -206,12 +255,12 @@
         );
         if (!btn) return false;
 
+        ui.etapa('Transferência confirmada');
         click(btn);
-        console.log('✅ Transferência confirmada');
 
         setTimeout(() => {
             emTransferencia = false;
-            console.log('🔓 Pronto para próximo cliente');
+            ui.etapa('Aguardando próximo cliente');
         }, 2000);
 
         return true;
@@ -232,7 +281,7 @@
                 if (!clicarTransferir()) return;
 
                 setTimeout(() => {
-                    if (!selecionarSetorDeVendas()) return;
+                    if (!selecionarSetorVendas()) return;
 
                     setTimeout(() => {
                         if (!clicarSelecionar()) return;
@@ -242,12 +291,12 @@
 
                             setTimeout(() => {
                                 clicarConfirmar();
-                            }, 1000);
+                            }, 900);
 
-                        }, 1200);
-                    }, 1000);
-                }, 1200);
-            }, 1000);
+                        }, 1000);
+                    }, 900);
+                }, 900);
+            }, 900);
         }, 800);
     }
 
