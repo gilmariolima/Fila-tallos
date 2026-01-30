@@ -1,6 +1,6 @@
 
 // ==UserScript==
-// @name         1
+// @name         OBSERVADOR
 // @namespace    https://tampermonkey.net/
 // @version      1.3.0
 // @description  Lista operadores por status, permite pausar e salva no localStorage
