@@ -11,9 +11,8 @@
 (function () {
     'use strict';
 
-    // 🔒 LISTA DE AGENTES PERMITIDOS
     const AGENTES_PERMITIDOS = [
-        'Igor Schneider', 'Ayla Nicole', 'Felipe Sombra', 'Melissa Bezerra',
+        'Igor Schneider','Felipe Sombra', 'Melissa Bezerra',
         'Luiziane Ferreira', 'Daniel Lima', 'Marcelo Santos', 'João Pedro',
         'Aline Simplicio', 'David Elias', 'Marcus Luan', 'Tifane Sombra',
         'Caio Maciel', 'Ana Beatriz', 'Marcelo Augusto', 'Uelisson Torres',
@@ -59,13 +58,10 @@
             if (status === 'ocupado') ocupado.push(nome);
         });
 
-        // ordena online alfabeticamente
         online.sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
-        // 🔐 salva em memória global (opcional)
         window.statusOperadoresSetor = { online, offline, ocupado };
 
-        // 💾 salva no localStorage (COMUNICAÇÃO ENTRE ABAS)
         localStorage.setItem(
             'RD_STATUS_OPERADORES',
             JSON.stringify({
@@ -83,7 +79,6 @@
         console.log('💾 Salvo no localStorage');
     }
 
-    // ▶️ START
     function iniciar() {
         if (rodando) return;
         rodando = true;
@@ -100,7 +95,6 @@
         botao.style.background = '#28a745';
     }
 
-    // 🔘 BOTÃO NA TELA
     const botao = document.createElement('button');
     botao.textContent = '▶ INICIAR';
     botao.style.position = 'fixed';
