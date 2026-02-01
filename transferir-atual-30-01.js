@@ -17,9 +17,6 @@
     let indiceOnline = 0;
     let ultimoAtendente = null;
 
-    /* ==========================
-       LISTA FIXA (A–Z)
-    ========================== */
     const LISTA_FIXA_ATENDENTES = [
         'Aline Santos','Aline Simplicio','Ana Beatriz','André Lucas','Bruno Amancio',
         'Caio Maciel','Cayo Mendes','Daniel Lima','David Elias','Felipe Sombra',
@@ -28,10 +25,6 @@
         'Marcelo Santos','Marcus Luan','Melissa Bezerra','Pedro Santos',
         'Tifane Sombra','Uelisson Torres','William Rodrigues'
     ];
-
-    /* ==========================
-       UI
-    ========================== */
     const ui = (() => {
         const box = document.createElement('div');
         box.innerHTML = `
@@ -67,9 +60,6 @@
     })();
     ui.lista();
 
-    /* ==========================
-       HELPERS
-    ========================== */
     function click(el){
         el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
         el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
@@ -91,10 +81,6 @@
 
         return true;
     }
-
-    /* ==========================
-       BOTÃO
-    ========================== */
     const botao=document.createElement('button');
     botao.textContent='▶ INICIAR';
     Object.assign(botao.style,{
@@ -123,9 +109,6 @@
         ui.status('⏸ Parado');
     }
 
-    /* ==========================
-       FLUXO
-    ========================== */
     function clicarUltimoCliente(){
         const lista=document.querySelectorAll('.customer-item');
         if(!lista.length) return false;
@@ -213,9 +196,6 @@
         return true;
     }
 
-    /* ==========================
-       LOOP PRINCIPAL
-    ========================== */
     function loopPrincipal(){
         if(!rodando||emTransferencia) return;
 
