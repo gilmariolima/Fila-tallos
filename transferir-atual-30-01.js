@@ -20,7 +20,7 @@
     const LISTA_FIXA_ATENDENTES = [
         'Aline Santos','Aline Simplicio','Ana Beatriz','André Lucas','Bruno Amancio',
         'Caio Maciel','Cayo Mendes','Daniel Lima','David Elias','Felipe Sombra',
-        'Gilvan Lima','Gilmário Lima','Igor Schneider','João Pedro','Kaio Leão',
+        'Gilmário Lima','Igor Schneider','João Pedro','Kaio Leão',
         'Léo Silva','Lucas Sombra','Luís Davi','Luiziane Ferreira','Marcelo Augusto',
         'Marcelo Santos','Marcus Luan','Melissa Bezerra','Pedro Santos',
         'Tifane Sombra','Uelisson Torres','William Rodrigues'
@@ -41,6 +41,33 @@
             borderRadius:'8px',fontSize:'13px',zIndex:99999
         });
         document.body.appendChild(box);
+        // ===== DRAG DO MODAL =====
+        let isDragging = false;
+        let offsetX = 0;
+        let offsetY = 0;
+        
+        // cursor visual
+        box.style.cursor = 'move';
+        
+        box.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            offsetX = e.clientX - box.getBoundingClientRect().left;
+            offsetY = e.clientY - box.getBoundingClientRect().top;
+            box.style.opacity = '0.85';
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            box.style.left = (e.clientX - offsetX) + 'px';
+            box.style.top  = (e.clientY - offsetY) + 'px';
+            box.style.right = 'auto'; // remove fixação
+        });
+        
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+            box.style.opacity = '1';
+        });
+
 
         return {
             status:t=>box.querySelector('#ui-status').textContent=t,
