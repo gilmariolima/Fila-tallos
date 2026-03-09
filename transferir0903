@@ -1,0 +1,519 @@
+// ==UserScript==
+// @name         Auto Transferência
+// @namespace    https://tampermonkey.net/
+// @version      2.7.0
+// @description  Auto transferência com contador, reset, repetir último atendente e correções de travamento/parada
+// @match        https://app.tallos.com.br/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    let rodando = false;
+    let emTransferencia = false;
+    let loop = null;
+
+    let indiceOnline = 0;
+    let ultimoAtendente = null;
+    let repetirUltimo = false;
+
+    let filaAtualizando = false;
+
+    const timers = new Set();
+
+    const STORAGE_CONTADOR = 'RD_CONTADOR_ATENDENTES';
+
+    const LISTA_FIXA_ATENDENTES = [
+        'Aline Santos', 'Aline Simplicio', 'Ana Beatriz', 'André Lucas', 'Bruno Amancio',
+        'Caio Maciel', 'Cayo Mendes', 'Daniel Lima', 'Felipe Sombra',
+        'Gilmário Lima', 'Gleison Castro', 'Igor Schneider', 'João Pedro', 'Kaio Leão',
+        'Lucas Sombra', 'Luiziane Ferreira', 'Marcelo Augusto',
+        'Marcelo Santos', 'Marcus Luan', 'Melissa Bezerra', 'Nayara Oliveira', 'Pedro Santos',
+        'Tifane Sombra', 'Uelisson Torres', 'William Rodrigues'
+    ];
+
+    function agendar(fn, ms) {
+        const id = setTimeout(() => {
+            timers.delete(id);
+            try {
+                fn();
+            } catch (err) {
+                console.error('[Auto Transferência] Erro em timer:', err);
+            }
+        }, ms);
+
+        timers.add(id);
+        return id;
+    }
+
+    function limparTimers() {
+        for (const id of timers) clearTimeout(id);
+        timers.clear();
+    }
+
+    function normalizarTexto(txt) {
+        return String(txt || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    }
+
+    function getContadores() {
+        try {
+            return JSON.parse(localStorage.getItem(STORAGE_CONTADOR) || '{}');
+        } catch {
+            return {};
+        }
+    }
+
+    function salvarContadores(obj) {
+        localStorage.setItem(STORAGE_CONTADOR, JSON.stringify(obj));
+    }
+
+    function incrementarContador(nome) {
+        const contadores = getContadores();
+        contadores[nome] = (contadores[nome] || 0) + 1;
+        salvarContadores(contadores);
+        ui.lista();
+    }
+
+    function resetarContadores() {
+        if (!confirm('Deseja zerar TODOS os contadores?')) return;
+        salvarContadores({});
+        ui.lista();
+        ui.etapa('Contadores resetados');
+    }
+
+    function dataAtual() {
+        return new Date().toLocaleDateString('pt-BR');
+    }
+
+    function voltarUltimoAtendente() {
+        if (!ultimoAtendente) {
+            alert('Nenhum atendente para repetir');
+            return;
+        }
+
+        const idx = LISTA_FIXA_ATENDENTES.findIndex(n => normalizarTexto(n) === normalizarTexto(ultimoAtendente));
+        if (idx === -1) {
+            alert('Último atendente não encontrado na lista fixa');
+            return;
+        }
+
+        indiceOnline = idx;
+        repetirUltimo = true;
+        ui.etapa(`⏪ ${ultimoAtendente} receberá novamente`);
+    }
+
+    function click(el) {
+        if (!el) return;
+        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+
+    function falhar(etapa) {
+        console.warn(`[Auto Transferência] Falha em: ${etapa}`);
+        emTransferencia = false;
+        ui.etapa(`Erro em: ${etapa}`);
+
+        if (rodando) {
+            agendar(() => {
+                if (rodando) atualizarFila();
+            }, 1200);
+        }
+    }
+
+    function obterOnlinesDoStorage() {
+        try {
+            const raw = localStorage.getItem('RD_STATUS_OPERADORES');
+            if (!raw) return [];
+
+            const parsed = JSON.parse(raw);
+            const online = Array.isArray(parsed?.online) ? parsed.online : [];
+
+            return online
+                .map(item => {
+                    if (typeof item === 'string') return item;
+                    if (item && typeof item === 'object') {
+                        return item.nome || item.name || item.label || '';
+                    }
+                    return '';
+                })
+                .filter(Boolean);
+        } catch (err) {
+            console.error('[Auto Transferência] Erro ao ler RD_STATUS_OPERADORES:', err);
+            return [];
+        }
+    }
+
+    const ui = (() => {
+        const box = document.createElement('div');
+        box.innerHTML = `
+            <div id="ui-topo" style="
+                font-weight:bold;
+                margin-bottom:8px;
+                padding-bottom:8px;
+                border-bottom:1px solid #333;
+                cursor:move;
+                user-select:none;
+            ">🚚 Auto Transferência</div>
+
+            <div id="ui-status">⏸ Parado</div>
+            <div style="font-size:12px;color:#aaa;margin:6px 0 8px;">
+                📅 <span id="ui-data"></span>
+            </div>
+
+            <div><b>👤 Cliente:</b> <span id="ui-cliente">—</span></div>
+            <div style="margin-top:6px;"><b>🔴 Último a receber:</b><br><span id="ui-ultimo">—</span></div>
+            <div style="margin-top:6px;"><b>📦 Etapa:</b> <span id="ui-etapa">—</span></div>
+
+            <button id="btn-reset" style="
+                width:100%;
+                margin:10px 0 6px;
+                padding:8px;
+                background:#ffffff;
+                color:#111;
+                border:none;
+                border-radius:6px;
+                font-weight:bold;
+                cursor:pointer;
+            ">🔄 Resetar contadores</button>
+
+            <button id="btn-voltar" style="
+                width:100%;
+                margin:0 0 8px;
+                padding:8px;
+                background:#ffc107;
+                color:#111;
+                border:none;
+                border-radius:6px;
+                font-weight:bold;
+                cursor:pointer;
+            ">⏪ Repetir último atendente</button>
+
+            <div style="margin:8px 0 6px;"><b>📋 Lista fixa (A–Z)</b></div>
+            <ul id="ui-onlines" style="
+                max-height:260px;
+                overflow:auto;
+                padding-left:18px;
+                margin:0;
+            "></ul>
+        `;
+
+        Object.assign(box.style, {
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            width: '320px',
+            background: '#111',
+            color: '#fff',
+            padding: '12px',
+            borderRadius: '10px',
+            fontSize: '13px',
+            zIndex: 99999,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.35)'
+        });
+
+        document.body.appendChild(box);
+
+        let isDragging = false;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        const topo = box.querySelector('#ui-topo');
+
+        topo.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            offsetX = e.clientX - box.getBoundingClientRect().left;
+            offsetY = e.clientY - box.getBoundingClientRect().top;
+            box.style.opacity = '0.88';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            box.style.left = (e.clientX - offsetX) + 'px';
+            box.style.top = (e.clientY - offsetY) + 'px';
+            box.style.right = 'auto';
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (!isDragging) return;
+            isDragging = false;
+            box.style.opacity = '1';
+        });
+
+        box.querySelector('#btn-reset').onclick = resetarContadores;
+        box.querySelector('#btn-voltar').onclick = voltarUltimoAtendente;
+        box.querySelector('#ui-data').textContent = dataAtual();
+
+        return {
+            status(t) {
+                box.querySelector('#ui-status').textContent = t;
+            },
+            cliente(t) {
+                box.querySelector('#ui-cliente').textContent = t || '—';
+            },
+            etapa(t) {
+                box.querySelector('#ui-etapa').textContent = t || '—';
+            },
+            ultimo(t) {
+                box.querySelector('#ui-ultimo').textContent = t || '—';
+                this.lista();
+            },
+            lista() {
+                const ul = box.querySelector('#ui-onlines');
+                const contadores = getContadores();
+                ul.innerHTML = '';
+
+                LISTA_FIXA_ATENDENTES.forEach(nome => {
+                    const li = document.createElement('li');
+                    const total = contadores[nome] || 0;
+                    li.textContent = `${nome} (${total})`;
+                    li.style.marginBottom = '4px';
+
+                    if (normalizarTexto(nome) === normalizarTexto(ultimoAtendente)) {
+                        li.style.color = '#ff5c5c';
+                        li.style.fontWeight = 'bold';
+                    }
+
+                    ul.appendChild(li);
+                });
+            }
+        };
+    })();
+
+    ui.lista();
+
+    function atualizarFila() {
+        if (filaAtualizando) return;
+        filaAtualizando = true;
+
+        ui.etapa('Atualizando fila');
+
+        const btnFila = [...document.querySelectorAll('button')]
+            .find(b => b.innerText && b.innerText.includes('Fila de Espera'));
+
+        if (btnFila) click(btnFila);
+
+        agendar(() => {
+            const btnAtualizar = document.querySelector('.custom-queue-wait-icon');
+            if (btnAtualizar) click(btnAtualizar);
+
+            agendar(() => {
+                filaAtualizando = false;
+            }, 1200);
+        }, 500);
+    }
+
+    const botao = document.createElement('button');
+    botao.textContent = '▶ INICIAR';
+
+    Object.assign(botao.style, {
+        position: 'fixed',
+        bottom: '20px',
+        right: '20px',
+        padding: '10px 14px',
+        borderRadius: '8px',
+        border: 'none',
+        background: '#28a745',
+        color: '#fff',
+        fontWeight: 'bold',
+        cursor: 'pointer',
+        zIndex: 99999,
+        boxShadow: '0 8px 24px rgba(0,0,0,0.25)'
+    });
+
+    botao.onclick = () => rodando ? parar() : iniciar();
+    document.body.appendChild(botao);
+
+    function iniciar() {
+        if (rodando) return;
+
+        rodando = true;
+        emTransferencia = false;
+
+        botao.textContent = '⏸ PARAR';
+        botao.style.background = '#dc3545';
+
+        ui.status('▶ Rodando');
+        ui.etapa('Iniciando');
+        atualizarFila();
+
+        loop = setInterval(loopPrincipal, 6500);
+    }
+
+    function parar() {
+        rodando = false;
+        emTransferencia = false;
+        filaAtualizando = false;
+
+        clearInterval(loop);
+        loop = null;
+        limparTimers();
+
+        botao.textContent = '▶ INICIAR';
+        botao.style.background = '#28a745';
+
+        ui.status('⏸ Parado');
+        ui.etapa('Parado manualmente');
+    }
+
+    function clicarUltimoCliente() {
+        const lista = document.querySelectorAll('.customer-item');
+        if (!lista.length) return false;
+
+        const ultimo = lista[lista.length - 1];
+        click(ultimo);
+
+        const nomeCliente = (ultimo.innerText || '').split('\n')[0].trim();
+        ui.cliente(nomeCliente || '—');
+
+        return true;
+    }
+
+    function clicarTransferir() {
+        const btn = document.querySelector('button[data-cy="cy-chat-center-header-transfer-attendance"]');
+        if (!btn) return false;
+
+        ui.etapa('Abrindo transferência');
+        click(btn);
+        return true;
+    }
+
+    function selecionarSetorVendas() {
+        const select = document.querySelector('select[data-cy="cy-confirm-transfer-to-department"]');
+        if (!select) return false;
+
+        const opcao = [...select.options].find(o =>
+            normalizarTexto(o.textContent).includes(normalizarTexto('SETOR DE VENDAS'))
+        );
+
+        if (!opcao) return false;
+
+        select.value = opcao.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        ui.etapa('Setor de vendas selecionado');
+        return true;
+    }
+
+    function clicarSelecionar() {
+        const btn = document.querySelector('button[data-cy="cy-attendance-actions-btn-confirm-to-transfer-department"]');
+        if (!btn) return false;
+
+        ui.etapa('Confirmando setor');
+        click(btn);
+        return true;
+    }
+
+    function selecionarAtendenteOnline() {
+        const onlinesRaw = obterOnlinesDoStorage();
+        const onlinesNormalizados = new Set(onlinesRaw.map(normalizarTexto));
+
+        if (!onlinesNormalizados.size) return false;
+
+        const select = document.querySelector('select[data-cy="cy-confirm-transfer-to-department"]');
+        if (!select) return false;
+
+        for (let i = 0; i < LISTA_FIXA_ATENDENTES.length; i++) {
+            const idx = (indiceOnline + i) % LISTA_FIXA_ATENDENTES.length;
+            const nome = LISTA_FIXA_ATENDENTES[idx];
+            const nomeNorm = normalizarTexto(nome);
+
+            if (!repetirUltimo && ultimoAtendente && nomeNorm === normalizarTexto(ultimoAtendente)) {
+                continue;
+            }
+
+            if (!onlinesNormalizados.has(nomeNorm)) {
+                continue;
+            }
+
+            const opcao = [...select.options].find(o =>
+                normalizarTexto(o.textContent) === nomeNorm
+            );
+
+            if (!opcao) continue;
+
+            select.value = opcao.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+
+            indiceOnline = (idx + 1) % LISTA_FIXA_ATENDENTES.length;
+            ultimoAtendente = nome;
+
+            ui.ultimo(nome);
+            ui.etapa(`Atendente selecionado: ${nome}`);
+            return true;
+        }
+
+        return false;
+    }
+
+    function clicarConfirmar() {
+        const btn = document.querySelector('button[data-cy="cy-attendance-actions-btn-confirm-to-transfer-department"]');
+        if (!btn) return false;
+
+        ui.etapa('Confirmando transferência');
+        click(btn);
+
+        if (ultimoAtendente) {
+            incrementarContador(ultimoAtendente);
+        }
+
+        repetirUltimo = false;
+
+        agendar(() => {
+            emTransferencia = false;
+
+            if (rodando) {
+                atualizarFila();
+                ui.etapa('Aguardando próximo cliente');
+            }
+        }, 2000);
+
+        return true;
+    }
+
+    function loopPrincipal() {
+        if (!rodando || emTransferencia) return;
+
+        const clientes = document.querySelectorAll('.customer-item');
+
+        if (!clientes.length) {
+            atualizarFila();
+            return;
+        }
+
+        if (!clicarUltimoCliente()) return;
+
+        emTransferencia = true;
+        ui.etapa('Cliente selecionado');
+
+        agendar(() => {
+            if (!rodando) return;
+            if (!clicarTransferir()) return falhar('clicarTransferir');
+
+            agendar(() => {
+                if (!rodando) return;
+                if (!selecionarSetorVendas()) return falhar('selecionarSetorVendas');
+
+                agendar(() => {
+                    if (!rodando) return;
+                    if (!clicarSelecionar()) return falhar('clicarSelecionar');
+
+                    agendar(() => {
+                        if (!rodando) return;
+                        if (!selecionarAtendenteOnline()) return falhar('selecionarAtendenteOnline');
+
+                        agendar(() => {
+                            if (!rodando) return;
+                            if (!clicarConfirmar()) return falhar('clicarConfirmar');
+                        }, 900);
+                    }, 1000);
+                }, 900);
+            }, 900);
+        }, 800);
+    }
+})();
