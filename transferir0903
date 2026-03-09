@@ -187,8 +187,8 @@
                 width:100%;
                 margin:0 0 8px;
                 padding:8px;
-                background:#ffc107;
-                color:#111;
+                background:#8b0000;
+                color:#fff;
                 border:none;
                 border-radius:6px;
                 font-weight:bold;
@@ -197,8 +197,6 @@
 
             <div style="margin:8px 0 6px;"><b>📋 Lista fixa (A–Z)</b></div>
             <ul id="ui-onlines" style="
-                max-height:260px;
-                overflow:auto;
                 padding-left:18px;
                 margin:0;
             "></ul>
